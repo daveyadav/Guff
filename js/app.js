@@ -64,6 +64,10 @@ function fmtDur(s) {
   s = Math.round(s || 0);
   return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
 }
+function tsMillis(v) {
+  if (!v) return 0;
+  return v.toMillis ? v.toMillis() : v;
+}
 function stopAll() {
   state.unsubs.forEach(u => { try { u(); } catch (e) {} });
   state.unsubs = [];
@@ -352,20 +356,22 @@ async function sendRequest(toUid, toUsername, toName, toPhoto) {
 
 function subscribeRequests() {
   const me = state.user.uid;
-  const u1 = db.collection("friendRequests").where("to", "==", me).where("status", "==", "pending")
+  // single-field query (no composite index needed); pending filtered client-side
+  const u1 = db.collection("friendRequests").where("to", "==", me)
     .onSnapshot(snap => {
+      const docs = snap.docs.filter(d => (d.data().status || "pending") === "pending");
       const box = $("req-incoming");
       const empty = $("req-incoming-empty");
       const badge = $("badge-requests");
-      if (snap.empty) {
+      if (docs.length === 0) {
         box.innerHTML = ""; empty.classList.remove("hidden"); badge.classList.add("hidden");
         return;
       }
       empty.classList.add("hidden");
-      badge.textContent = snap.size > 9 ? "9+" : snap.size;
+      badge.textContent = docs.length > 9 ? "9+" : docs.length;
       badge.classList.remove("hidden");
       box.innerHTML = "";
-      snap.forEach(d => {
+      docs.forEach(d => {
         const r = d.data();
         const row = document.createElement("div");
         row.className = "row"; row.style.cursor = "default";
@@ -381,17 +387,18 @@ function subscribeRequests() {
         box.appendChild(row);
       });
     }, err => console.error(err));
-  const u2 = db.collection("friendRequests").where("from", "==", me).where("status", "==", "pending")
+  const u2 = db.collection("friendRequests").where("from", "==", me)
     .onSnapshot(snap => {
+      const docs = snap.docs.filter(d => (d.data().status || "pending") === "pending");
       const box = $("req-outgoing");
       const empty = $("req-outgoing-empty");
-      if (snap.empty) {
+      if (docs.length === 0) {
         box.innerHTML = ""; empty.classList.remove("hidden");
         return;
       }
       empty.classList.add("hidden");
       box.innerHTML = "";
-      snap.forEach(d => {
+      docs.forEach(d => {
         const r = d.data();
         const row = document.createElement("div");
         row.className = "row"; row.style.cursor = "default";
@@ -518,20 +525,21 @@ async function uploadAvatar(e) {
 /* ---------- chats ---------- */
 function subscribeChats() {
   const me = state.user.uid;
+  // single-field query (no composite index needed); newest-first sorted client-side
   const u = db.collection("chats").where("participants", "array-contains", me)
-    .orderBy("lastMessageAt", "desc")
     .onSnapshot(async snap => {
+      const docs = snap.docs.slice().sort((a, b) => tsMillis(b.data().lastMessageAt) - tsMillis(a.data().lastMessageAt));
       const box = $("chat-list");
       const empty = $("chat-list-empty");
       const badge = $("badge-chats");
       let totalUnread = 0;
-      if (snap.empty) {
+      if (docs.length === 0) {
         box.innerHTML = ""; empty.classList.remove("hidden"); badge.classList.add("hidden");
         return;
       }
       empty.classList.add("hidden");
       box.innerHTML = "";
-      for (const d of snap.docs) {
+      for (const d of docs) {
         const c = d.data();
         const other = (c.participants || []).find(x => x !== me);
         if (!other) continue;
