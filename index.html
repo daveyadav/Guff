@@ -7,7 +7,7 @@
 <meta name="description" content="Guff — a simple, fast messaging app. Text, photos, files and voice messages.">
 <meta name="theme-color" content="#0e1512">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="icon" type="image/png" href="icons/favicon-64.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="stylesheet" href="css/styles.css">
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -22,7 +22,7 @@
   <section id="screen-loading" class="screen active">
     <div class="auth-wrap">
       <div class="brand">
-        <div class="brand-mark">g</div>
+        <img class="brand-logo" src="icons/icon-192.png" alt="Guff logo">
         <h1>Guff</h1>
         <p id="loading-msg">loading…</p>
       </div>
@@ -34,7 +34,7 @@
   <section id="screen-auth" class="screen">
     <div class="auth-wrap">
       <div class="brand">
-        <div class="brand-mark">g</div>
+        <img class="brand-logo" src="icons/icon-192.png" alt="Guff logo">
         <h1>Guff</h1>
         <p>chat with your people</p>
       </div>
@@ -60,7 +60,7 @@
   <section id="screen-onboarding" class="screen">
     <div class="auth-wrap">
       <div class="brand">
-        <div class="brand-mark">g</div>
+        <img class="brand-logo" src="icons/icon-192.png" alt="Guff logo">
         <h1>Set up your profile</h1>
         <p>one step, then you're in</p>
       </div>
@@ -84,7 +84,7 @@
   <!-- ============ MAIN ============ -->
   <section id="screen-main" class="screen">
     <header class="topbar">
-      <div class="brand-mini"><div class="brand-mark sm">g</div><span>Guff</span></div>
+      <div class="brand-mini"><img class="brand-logo sm" src="icons/icon-192.png" alt="Guff logo"><span>Guff</span></div>
       <button id="btn-logout-top" class="icon-btn" title="Log out" aria-label="Log out">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
       </button>
@@ -133,6 +133,20 @@
           <p id="profile-msg" class="form-msg hidden"></p>
         </form>
         <button id="btn-logout" class="btn btn-ghost">Log out</button>
+        <div class="settings">
+          <div class="setting-row">
+            <div><b>Appearance</b><span class="muted">Dark or light theme</span></div>
+            <div class="seg" id="theme-seg">
+              <button data-theme-val="dark">Dark</button>
+              <button data-theme-val="light">Light</button>
+              <button data-theme-val="auto">Auto</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div><b>Message notifications</b><span class="muted">Alert me about new messages</span></div>
+            <button id="notif-switch" class="switch" role="switch" aria-checked="false" aria-label="Message notifications"><span></span></button>
+          </div>
+        </div>
       </div>
     </main>
 
@@ -188,6 +202,11 @@
     </footer>
   </section>
 
+  <div id="notify-banner" class="notify-banner hidden">
+    <img id="nb-avatar" class="avatar sm" alt="">
+    <div class="grow"><b id="nb-title"></b><span id="nb-body"></span></div>
+    <button id="nb-close" class="icon-btn" aria-label="Dismiss">✕</button>
+  </div>
   <div id="toast" class="toast hidden"></div>
 </div>
 <script src="js/config.js"></script>

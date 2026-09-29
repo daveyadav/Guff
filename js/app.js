@@ -6,6 +6,7 @@ const state = {
   user: null, profile: null,
   chatId: null, otherUid: null, otherProfile: null,
   unsubs: [], chatUnsubs: [], typingTimer: null, rec: null, recStart: 0, recTick: null,
+  msgWatch: {}, knownReqIds: null,
 };
 let auth = null, db = null, storage = null;
 const serverTS = () => firebase.firestore.FieldValue.serverTimestamp();
@@ -89,12 +90,159 @@ async function getDocOrNull(ref) {
 function stopAll() {
   state.unsubs.forEach(u => { try { u(); } catch (e) {} });
   state.unsubs = [];
+  state.msgWatch = {};
+  state.knownReqIds = null;
+}
+
+/* ---------- theme (dark / light / auto) ---------- */
+const THEME_KEY = "guff_theme";
+function currentThemeMode() { try { return localStorage.getItem(THEME_KEY) || "dark"; } catch (e) { return "dark"; } }
+function applyTheme(mode) {
+  let t = mode;
+  if (mode === "auto") {
+    try { t = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"; }
+    catch (e) { t = "dark"; }
+  }
+  document.documentElement.setAttribute("data-theme", t);
+  const mc = document.querySelector('meta[name="theme-color"]');
+  if (mc) mc.content = t === "light" ? "#ffffff" : "#0a0f1e";
+  try { localStorage.setItem(THEME_KEY, mode); } catch (e) {}
+}
+
+/* ---------- in-app history (device back button) ---------- */
+function goTab(tab) {
+  showTab(tab);
+  try { history.pushState({ view: "tab", tab }, ""); } catch (e) {}
+}
+function navRender(view, data) {
+  data = data || {};
+  if (view === "tab") {
+    leaveChat();
+    showScreen("screen-main");
+    showTab(data.tab || "tab-chats");
+  } else if (view === "chat" && data.chatId && data.otherUid) {
+    openChatState(data.chatId, data.otherUid);
+  }
+}
+window.addEventListener("popstate", e => {
+  const s = e && e.state;
+  if (!s || !s.view) return;
+  if (!state.user && s.view !== "auth") return; // stale entries after sign-out: stay put
+  navRender(s.view, s);
+});
+async function openChatState(chatId, otherUid) {
+  let p = { displayName: "…", username: "" };
+  try {
+    const ud = await db.collection("users").doc(otherUid).get();
+    if (ud.exists) p = Object.assign({ uid: otherUid }, ud.data());
+  } catch (e) {}
+  openChat(chatId, otherUid, p);
+}
+function openChatPushed(cid, otherUid, p) {
+  openChat(cid, otherUid, p);
+  try { history.pushState({ view: "chat", chatId: cid, otherUid }, ""); } catch (e) {}
+}
+function leaveChat() {
+  state.chatUnsubs.forEach(u => { try { u(); } catch (e) {} });
+  state.chatUnsubs = [];
+  state.chatId = null;
+  state.otherUid = null;
+  state.otherProfile = null;
+}
+
+/* ---------- notifications ---------- */
+const NOTIF_KEY = "guff_notif";
+function notifEnabled() { try { return localStorage.getItem(NOTIF_KEY) !== "off"; } catch (e) { return true; } }
+function setNotifEnabled(on) { try { localStorage.setItem(NOTIF_KEY, on ? "on" : "off"); } catch (e) {} }
+let bannerTimer = null;
+function showNotifyBanner(o) {
+  if (!notifEnabled()) return;
+  $("nb-avatar").src = o.avatar || "icons/icon-192.png";
+  $("nb-title").textContent = o.title || "Guff";
+  $("nb-body").textContent = o.body || "";
+  const b = $("notify-banner");
+  b.classList.remove("hidden");
+  b.onclick = e => {
+    hideNotifyBanner();
+    if (e.target.closest("#nb-close")) return;
+    if (o.onClick) o.onClick();
+  };
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(hideNotifyBanner, 4500);
+}
+function hideNotifyBanner() {
+  $("notify-banner").classList.add("hidden");
+  clearTimeout(bannerTimer);
+}
+function systemNotify(title, body, icon, onClick) {
+  try {
+    if (!("Notification" in window)) return false;
+    if (!notifEnabled() || Notification.permission !== "granted") return false;
+    if (!document.hidden) return false; // visible tab: use the in-app banner instead
+    const n = new Notification(title, { body: body || "", icon: icon || "icons/icon-192.png", tag: "guff" });
+    n.onclick = () => { try { window.focus(); } catch (e) {} if (onClick) onClick(); n.close(); };
+    return true;
+  } catch (e) { return false; }
+}
+function notifyIncoming(o) {
+  if (!notifEnabled()) return;
+  if (!systemNotify(o.title, o.body, o.avatar, o.onClick)) showNotifyBanner(o);
+}
+const profileCache = {};
+async function getCachedProfile(uid) {
+  if (profileCache[uid]) return profileCache[uid];
+  let p = { displayName: "Someone", username: "" };
+  try {
+    const ud = await db.collection("users").doc(uid).get();
+    if (ud.exists) p = Object.assign({ uid }, ud.data());
+  } catch (e) {}
+  profileCache[uid] = p;
+  return p;
+}
+function msgPreview(m) {
+  if (m.type === "text") return m.text || "";
+  if (m.type === "image") return "📷 Photo";
+  if (m.type === "audio") return "🎤 Voice message";
+  return "📎 " + (m.fileName || "File");
+}
+/* watches the newest message of one chat; notifies when a message arrives
+   from someone else while we're not viewing that chat */
+function watchChat(chatId) {
+  if (state.msgWatch[chatId]) return;
+  let first = true;
+  const u = db.collection("chats").doc(chatId).collection("messages")
+    .orderBy("createdAt", "desc").limit(1)
+    .onSnapshot(snap => {
+      if (first) { first = false; return; }
+      snap.docChanges().forEach(ch => {
+        if (ch.type !== "added") return;
+        const m = ch.doc.data();
+        if (!m || m.sender === state.user.uid) return;
+        if (state.chatId === chatId) return; // already viewing it
+        getCachedProfile(m.sender).then(p => {
+          notifyIncoming({
+            title: p.displayName || "New message",
+            body: msgPreview(m),
+            avatar: avatarURL(p),
+            onClick: () => openChatWith(m.sender),
+          });
+        });
+      });
+    }, () => {});
+  state.msgWatch[chatId] = u;
+  state.unsubs.push(u);
 }
 
 /* ---------- init ---------- */
 window.addEventListener("DOMContentLoaded", init);
 
 function init() {
+  applyTheme(currentThemeMode());
+  try {
+    window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
+      if (currentThemeMode() === "auto") applyTheme("auto");
+    });
+  } catch (e) {}
   wireStatic();
   if (!FIREBASE_READY) {
     $("cfg-warning").classList.remove("hidden");
@@ -115,8 +263,8 @@ function init() {
 
 function wireStatic() {
   document.querySelectorAll(".navbtn").forEach(b =>
-    b.addEventListener("click", () => showTab(b.dataset.tab)));
-  $("btn-chat-back").addEventListener("click", closeChat);
+    b.addEventListener("click", () => goTab(b.dataset.tab)));
+  $("btn-chat-back").addEventListener("click", () => { try { history.back(); } catch (e) { leaveChat(); showScreen("screen-main"); } });
   $("msg-input").addEventListener("input", onComposerInput);
   $("msg-input").addEventListener("keydown", e => {
     if (e.key === "Enter") sendText();
@@ -137,6 +285,8 @@ function onAuth(user) {
     stopAll();
     state.profile = null;
     clearProfileCache();
+    document.title = "Guff — chat with your people";
+    try { history.replaceState({ view: "auth" }, ""); } catch (e) {}
     showScreen("screen-auth");
     return;
   }
@@ -305,7 +455,9 @@ function enterMain() {
   stopAll();
   showScreen("screen-main");
   showTab("tab-chats");
+  try { history.replaceState({ view: "tab", tab: "tab-chats" }, ""); } catch (e) {}
   renderProfileTab();
+  wireSettings();
   subscribeChats();
   subscribeFriendships();
   subscribeRequests();
@@ -313,6 +465,33 @@ function enterMain() {
   $("friend-search").onkeydown = e => { if (e.key === "Enter") searchFriend(); };
   $("form-profile").onsubmit = saveProfileName;
   $("profile-avatar-input").onchange = uploadAvatar;
+}
+
+function wireSettings() {
+  const mode = currentThemeMode();
+  document.querySelectorAll("#theme-seg button").forEach(b => {
+    b.classList.toggle("active", b.dataset.themeVal === mode);
+    b.onclick = () => {
+      applyTheme(b.dataset.themeVal);
+      document.querySelectorAll("#theme-seg button").forEach(x => x.classList.toggle("active", x === b));
+    };
+  });
+  const sw = $("notif-switch");
+  const sync = () => {
+    const on = notifEnabled();
+    sw.classList.toggle("on", on);
+    sw.setAttribute("aria-checked", on ? "true" : "false");
+  };
+  sw.onclick = async () => {
+    const on = !notifEnabled();
+    setNotifEnabled(on);
+    if (on && "Notification" in window && Notification.permission === "default") {
+      try { await Notification.requestPermission(); } catch (e) {}
+    }
+    sync();
+    toast(on ? "Notifications on" : "Notifications off");
+  };
+  sync();
 }
 
 function chatIdFor(a, b) {
@@ -398,6 +577,22 @@ function subscribeRequests() {
   const u1 = db.collection("friendRequests").where("to", "==", me)
     .onSnapshot(snap => {
       const docs = snap.docs.filter(d => (d.data().status || "pending") === "pending");
+      // notify about brand-new incoming requests (skip the first snapshot)
+      const ids = new Set(docs.map(d => d.id));
+      if (state.knownReqIds) {
+        docs.forEach(d => {
+          if (!state.knownReqIds.has(d.id)) {
+            const r = d.data();
+            notifyIncoming({
+              title: "New friend request",
+              body: (r.fromDisplayName || "@" + r.fromUsername) + " wants to be friends",
+              avatar: r.fromPhoto || avatarSVG(r.fromDisplayName),
+              onClick: () => goTab("tab-requests"),
+            });
+          }
+        });
+      }
+      state.knownReqIds = ids;
       const box = $("req-incoming");
       const empty = $("req-incoming-empty");
       const badge = $("badge-requests");
@@ -573,6 +768,7 @@ function subscribeChats() {
       let totalUnread = 0;
       if (docs.length === 0) {
         box.innerHTML = ""; empty.classList.remove("hidden"); badge.classList.add("hidden");
+        document.title = "Guff — chat with your people";
         return;
       }
       empty.classList.add("hidden");
@@ -597,14 +793,17 @@ function subscribeChats() {
             <span class="time">${esc(timeFmt(c.lastMessageAt))}</span>
             ${unread ? `<span class="unread">${unread > 9 ? "9+" : unread}</span>` : ""}
           </div>`;
-        row.addEventListener("click", () => openChat(d.id, other, p));
+        row.addEventListener("click", () => openChatPushed(d.id, other, p));
         box.appendChild(row);
+        watchChat(d.id);
       }
       if (totalUnread > 0) {
         badge.textContent = totalUnread > 9 ? "9+" : totalUnread;
         badge.classList.remove("hidden");
+        document.title = `(${totalUnread > 9 ? "9+" : totalUnread}) Guff`;
       } else {
         badge.classList.add("hidden");
+        document.title = "Guff — chat with your people";
       }
     }, err => console.error(err));
   state.unsubs.push(u);
@@ -628,7 +827,7 @@ async function openChatWith(otherUid) {
       });
     }
   } catch (e) { console.error(e); }
-  openChat(cid, otherUid, p);
+  openChatPushed(cid, otherUid, p);
 }
 
 function openChat(cid, otherUid, otherProfile) {
@@ -660,14 +859,6 @@ function openChat(cid, otherUid, otherProfile) {
     }, () => {});
   state.unsubs.push(u, u2);
   state.chatUnsubs.push(u, u2);
-}
-
-function closeChat() {
-  state.chatUnsubs.forEach(u => { try { u(); } catch (e) {} });
-  state.chatUnsubs = [];
-  state.chatId = null;
-  state.otherUid = null;
-  showScreen("screen-main");
 }
 
 function renderMessages(docs) {

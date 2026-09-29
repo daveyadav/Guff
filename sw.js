@@ -1,5 +1,5 @@
 /* Guff service worker — offline app shell */
-const CACHE = "guff-shell-v3";
+const CACHE = "guff-shell-v4";
 const SHELL = [
   "./",
   "./index.html",
@@ -9,6 +9,7 @@ const SHELL = [
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
+  "./icons/favicon-64.png",
 ];
 
 self.addEventListener("install", e => {
