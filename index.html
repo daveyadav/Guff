@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#0e1512">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" href="icons/favicon-64.png">
-<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/logo-192.png">
 <link rel="stylesheet" href="css/styles.css">
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
@@ -22,7 +22,7 @@
   <section id="screen-loading" class="screen active">
     <div class="auth-wrap">
       <div class="brand">
-        <img class="brand-logo" src="icons/icon-192.png" alt="Guff logo">
+        <img class="brand-logo logo-pulse" src="icons/logo-192.png" alt="Guff logo">
         <h1>Guff</h1>
         <p id="loading-msg">loading…</p>
       </div>
@@ -34,7 +34,7 @@
   <section id="screen-auth" class="screen">
     <div class="auth-wrap">
       <div class="brand">
-        <img class="brand-logo" src="icons/icon-192.png" alt="Guff logo">
+        <img class="brand-logo" src="icons/logo-192.png" alt="Guff logo">
         <h1>Guff</h1>
         <p>chat with your people</p>
       </div>
@@ -60,7 +60,7 @@
   <section id="screen-onboarding" class="screen">
     <div class="auth-wrap">
       <div class="brand">
-        <img class="brand-logo" src="icons/icon-192.png" alt="Guff logo">
+        <img class="brand-logo" src="icons/logo-192.png" alt="Guff logo">
         <h1>Set up your profile</h1>
         <p>one step, then you're in</p>
       </div>
@@ -84,7 +84,7 @@
   <!-- ============ MAIN ============ -->
   <section id="screen-main" class="screen">
     <header class="topbar">
-      <div class="brand-mini"><img class="brand-logo sm" src="icons/icon-192.png" alt="Guff logo"><span>Guff</span></div>
+      <div class="brand-mini"><img class="brand-logo sm" src="icons/logo-192.png" alt="Guff logo"><span>Guff</span></div>
       <button id="btn-logout-top" class="icon-btn" title="Log out" aria-label="Log out">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
       </button>
@@ -94,7 +94,8 @@
       <div id="chat-list" class="list"></div>
       <div id="chat-list-empty" class="empty hidden">
         <p>No chats yet.</p>
-        <p class="muted">Add friends from the Friends tab, then say hi.</p>
+        <p class="muted">Add friends, then say hi.</p>
+        <button id="btn-empty-find" class="btn btn-primary sm">Find friends</button>
       </div>
     </main>
 
@@ -127,12 +128,20 @@
         </label>
         <h2 id="profile-name"></h2>
         <p id="profile-username" class="muted"></p>
+        <p id="profile-bio" class="muted hidden"></p>
+        <p id="profile-stats" class="stats-line muted"></p>
         <form id="form-profile" autocomplete="off">
           <input id="profile-displayname" type="text" placeholder="Profile name" required>
-          <button type="submit" class="btn btn-primary sm">Save name</button>
+          <input id="profile-bio-input" type="text" placeholder="About (optional)" maxlength="120">
+          <button type="submit" class="btn btn-primary sm">Save profile</button>
           <p id="profile-msg" class="form-msg hidden"></p>
         </form>
+        <div class="profile-actions">
+          <button id="btn-share-profile" class="btn btn-ghost sm">Share my profile</button>
+          <button id="btn-install" class="btn btn-ghost sm hidden">Install app</button>
+        </div>
         <button id="btn-logout" class="btn btn-ghost">Log out</button>
+        <p class="muted app-version">Guff v6</p>
         <div class="settings">
           <div class="setting-row">
             <div><b>Appearance</b><span class="muted">Dark or light theme</span></div>
@@ -176,7 +185,7 @@
       <button id="btn-chat-back" class="icon-btn" aria-label="Back">
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
       </button>
-      <img id="chat-avatar" class="avatar" alt="">
+      <span class="avatar-wrap" id="chat-avatar-wrap"><img id="chat-avatar" class="avatar" alt=""><i class="presence-dot hidden"></i></span>
       <div class="chat-title">
         <b id="chat-name"></b>
         <span id="chat-status" class="muted"></span>

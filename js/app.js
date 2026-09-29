@@ -6,7 +6,9 @@ const state = {
   user: null, profile: null,
   chatId: null, otherUid: null, otherProfile: null,
   unsubs: [], chatUnsubs: [], typingTimer: null, rec: null, recStart: 0, recTick: null,
-  msgWatch: {}, knownReqIds: null,
+  msgWatch: {}, knownReqIds: null, typingThem: false,
+  presence: {}, presenceWatch: {}, presenceTimer: null,
+  friendCount: 0, chatCount: 0,
 };
 let auth = null, db = null, storage = null;
 const serverTS = () => firebase.firestore.FieldValue.serverTimestamp();
@@ -92,7 +94,77 @@ function stopAll() {
   state.unsubs = [];
   state.msgWatch = {};
   state.knownReqIds = null;
+  state.typingThem = false;
+  state.presence = {};
+  state.presenceWatch = {};
+  clearInterval(state.presenceTimer);
+  state.presenceTimer = null;
 }
+
+/* ---------- presence (online / last seen) ---------- */
+const PRESENCE_STALE_MS = 150000; // 2.5 min without a heartbeat = offline
+function isOnline(uid) {
+  const p = state.presence[uid];
+  return !!(p && p.online && (Date.now() - (p.lastSeen || 0) < PRESENCE_STALE_MS));
+}
+function lastSeenText(ts) {
+  if (!ts) return "";
+  const diff = Date.now() - ts;
+  if (diff < 60000) return "last seen just now";
+  if (diff < 3600000) return "last seen " + Math.floor(diff / 60000) + "m ago";
+  if (diff < 86400000) return "last seen " + Math.floor(diff / 3600000) + "h ago";
+  if (diff < 172800000) return "last seen yesterday";
+  return "last seen " + new Date(ts).toLocaleDateString();
+}
+function refreshPresenceDots() {
+  document.querySelectorAll("[data-presence-uid]").forEach(el => {
+    const dot = el.querySelector(".presence-dot");
+    if (dot) dot.classList.toggle("hidden", !isOnline(el.dataset.presenceUid));
+  });
+  updateChatStatus();
+}
+function updateChatStatus() {
+  if (!state.otherUid) return;
+  const el = $("chat-status");
+  if (!el) return;
+  if (state.typingThem) { el.textContent = "typing…"; el.classList.remove("online-text"); return; }
+  if (isOnline(state.otherUid)) { el.textContent = "Online"; el.classList.add("online-text"); return; }
+  el.classList.remove("online-text");
+  const p = state.presence[state.otherUid];
+  el.textContent = (p && p.lastSeen) ? lastSeenText(p.lastSeen) : "@" + (state.otherProfile.username || "");
+}
+function watchPresence(uid) {
+  if (!uid || state.presenceWatch[uid]) return;
+  const u = db.collection("users").doc(uid).onSnapshot(doc => {
+    if (!doc.exists) return;
+    const d = doc.data();
+    state.presence[uid] = { online: !!d.online, lastSeen: tsMillis(d.lastSeen) };
+    refreshPresenceDots();
+  }, () => {});
+  state.presenceWatch[uid] = u;
+  state.unsubs.push(u);
+}
+function startPresence() {
+  const uid = state.user.uid;
+  const beat = () => {
+    db.collection("users").doc(uid).set({ online: true, lastSeen: serverTS() }, { merge: true }).catch(() => {});
+  };
+  beat();
+  clearInterval(state.presenceTimer);
+  state.presenceTimer = setInterval(beat, 60000);
+  window.addEventListener("beforeunload", () => {
+    try { db.collection("users").doc(uid).set({ online: false, lastSeen: serverTS() }, { merge: true }); } catch (e) {}
+  });
+}
+
+/* ---------- install prompt ---------- */
+let deferredPrompt = null;
+window.addEventListener("beforeinstallprompt", e => {
+  e.preventDefault();
+  deferredPrompt = e;
+  const b = $("btn-install");
+  if (b) b.classList.remove("hidden");
+});
 
 /* ---------- theme (dark / light / auto) ---------- */
 const THEME_KEY = "guff_theme";
@@ -157,7 +229,7 @@ function setNotifEnabled(on) { try { localStorage.setItem(NOTIF_KEY, on ? "on" :
 let bannerTimer = null;
 function showNotifyBanner(o) {
   if (!notifEnabled()) return;
-  $("nb-avatar").src = o.avatar || "icons/icon-192.png";
+  $("nb-avatar").src = o.avatar || "icons/logo-192.png";
   $("nb-title").textContent = o.title || "Guff";
   $("nb-body").textContent = o.body || "";
   const b = $("notify-banner");
@@ -179,7 +251,7 @@ function systemNotify(title, body, icon, onClick) {
     if (!("Notification" in window)) return false;
     if (!notifEnabled() || Notification.permission !== "granted") return false;
     if (!document.hidden) return false; // visible tab: use the in-app banner instead
-    const n = new Notification(title, { body: body || "", icon: icon || "icons/icon-192.png", tag: "guff" });
+    const n = new Notification(title, { body: body || "", icon: icon || "icons/logo-192.png", tag: "guff" });
     n.onclick = () => { try { window.focus(); } catch (e) {} if (onClick) onClick(); n.close(); };
     return true;
   } catch (e) { return false; }
@@ -205,6 +277,16 @@ function msgPreview(m) {
   if (m.type === "audio") return "🎤 Voice message";
   return "📎 " + (m.fileName || "File");
 }
+/* badge the installed app icon with the unread count (Android PWA) */
+function setAppBadge(n) {
+  try {
+    if ("setAppBadge" in navigator) {
+      if (n > 0) navigator.setAppBadge(n);
+      else if ("clearAppBadge" in navigator) navigator.clearAppBadge();
+    }
+  } catch (e) {}
+}
+
 /* watches the newest message of one chat; notifies when a message arrives
    from someone else while we're not viewing that chat */
 function watchChat(chatId) {
@@ -366,9 +448,9 @@ function bindAuthButtons() {
   });
 
   $("form-onboarding").addEventListener("submit", finishOnboarding);
-  $("btn-ob-logout").addEventListener("click", () => auth.signOut());
-  $("btn-logout").addEventListener("click", () => auth.signOut());
-  $("btn-logout-top").addEventListener("click", () => auth.signOut());
+  $("btn-ob-logout").addEventListener("click", signOutNow);
+  $("btn-logout").addEventListener("click", signOutNow);
+  $("btn-logout-top").addEventListener("click", signOutNow);
 }
 
 function friendlyAuthError(e) {
@@ -451,6 +533,14 @@ async function finishOnboarding(e) {
 }
 
 /* ---------- main ---------- */
+function signOutNow() {
+  try {
+    if (state.user) db.collection("users").doc(state.user.uid)
+      .set({ online: false, lastSeen: serverTS() }, { merge: true });
+  } catch (e) {}
+  auth.signOut();
+}
+
 function enterMain() {
   stopAll();
   showScreen("screen-main");
@@ -458,13 +548,42 @@ function enterMain() {
   try { history.replaceState({ view: "tab", tab: "tab-chats" }, ""); } catch (e) {}
   renderProfileTab();
   wireSettings();
+  wireShareInstall();
+  startPresence();
   subscribeChats();
   subscribeFriendships();
   subscribeRequests();
   $("btn-friend-search").onclick = searchFriend;
   $("friend-search").onkeydown = e => { if (e.key === "Enter") searchFriend(); };
-  $("form-profile").onsubmit = saveProfileName;
+  $("form-profile").onsubmit = saveProfile;
   $("profile-avatar-input").onchange = uploadAvatar;
+  $("btn-empty-find").onclick = () => goTab("tab-friends");
+  // opened via a shared profile link: ?add=username
+  const addParam = new URLSearchParams(location.search).get("add");
+  if (addParam) {
+    goTab("tab-friends");
+    try { history.replaceState({ view: "tab", tab: "tab-friends" }, "", location.pathname); } catch (e) {}
+    $("friend-search").value = addParam;
+    searchFriend();
+  }
+}
+
+function wireShareInstall() {
+  $("btn-share-profile").onclick = async () => {
+    const link = location.origin + location.pathname + "?add=" + encodeURIComponent(state.profile.username);
+    try {
+      if (navigator.share) { await navigator.share({ title: "Guff", text: "Add me on Guff", url: link }); return; }
+    } catch (e) { return; } // user dismissed the share sheet
+    try { await navigator.clipboard.writeText(link); toast("Profile link copied."); }
+    catch (e) { toast(link); }
+  };
+  $("btn-install").onclick = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    try { await deferredPrompt.userChoice; } catch (e) {}
+    deferredPrompt = null;
+    $("btn-install").classList.add("hidden");
+  };
 }
 
 function wireSettings() {
@@ -681,6 +800,8 @@ function subscribeFriendships() {
     .onSnapshot(async snap => {
       const box = $("friend-list");
       const empty = $("friend-list-empty");
+      state.friendCount = 0;
+      renderStats();
       if (snap.empty) {
         box.innerHTML = ""; empty.classList.remove("hidden");
         return;
@@ -699,11 +820,14 @@ function subscribeFriendships() {
         const row = document.createElement("button");
         row.className = "row";
         row.innerHTML = `
-          <img class="avatar" src="${esc(avatarURL(p))}" alt="">
-          <div class="grow"><b>${esc(p.displayName)}</b><span>@${esc(p.username || "")}</span></div>`;
+          <span class="avatar-wrap" data-presence-uid="${esc(other)}"><img class="avatar" src="${esc(avatarURL(p))}" alt=""><i class="presence-dot hidden"></i></span>
+          <div class="grow"><b>${esc(p.displayName)}</b><span>${esc(p.bio || "@" + (p.username || ""))}</span></div>`;
         row.addEventListener("click", () => openChatWith(other));
         box.appendChild(row);
+        watchPresence(other);
       }
+      state.friendCount = snap.size;
+      renderStats();
     }, err => console.error(err));
   state.unsubs.push(u);
 }
@@ -715,24 +839,36 @@ function renderProfileTab() {
   $("profile-name").textContent = p.displayName;
   $("profile-username").textContent = "@" + p.username;
   $("profile-displayname").value = p.displayName;
+  $("profile-bio-input").value = p.bio || "";
+  const bioEl = $("profile-bio");
+  if (p.bio) { bioEl.textContent = p.bio; bioEl.classList.remove("hidden"); }
+  else bioEl.classList.add("hidden");
+  renderStats();
 }
 
-async function saveProfileName(e) {
+function renderStats() {
+  const el = $("profile-stats");
+  if (el) el.textContent = (state.friendCount || 0) + " friends · " + (state.chatCount || 0) + " chats";
+}
+
+async function saveProfile(e) {
   e.preventDefault();
   const msg = $("profile-msg");
   msg.classList.add("hidden");
   const name = $("profile-displayname").value.trim();
   if (!name) return;
+  const bio = $("profile-bio-input").value.trim().slice(0, 120);
   try {
-    await db.collection("users").doc(state.user.uid).update({ displayName: name });
+    await db.collection("users").doc(state.user.uid).update({ displayName: name, bio });
     state.profile.displayName = name;
-    $("profile-name").textContent = name;
+    state.profile.bio = bio;
+    renderProfileTab();
     msg.textContent = "Saved.";
     msg.classList.remove("hidden");
     setTimeout(() => msg.classList.add("hidden"), 2000);
   } catch (err) {
     console.error(err);
-    toast("Couldn't save name.");
+    toast("Couldn't save profile.");
   }
 }
 
@@ -769,6 +905,9 @@ function subscribeChats() {
       if (docs.length === 0) {
         box.innerHTML = ""; empty.classList.remove("hidden"); badge.classList.add("hidden");
         document.title = "Guff — chat with your people";
+        state.chatCount = 0;
+        renderStats();
+        setAppBadge(0);
         return;
       }
       empty.classList.add("hidden");
@@ -787,7 +926,7 @@ function subscribeChats() {
         const row = document.createElement("button");
         row.className = "row";
         row.innerHTML = `
-          <img class="avatar" src="${esc(avatarURL(p))}" alt="">
+          <span class="avatar-wrap" data-presence-uid="${esc(other)}"><img class="avatar" src="${esc(avatarURL(p))}" alt=""><i class="presence-dot hidden"></i></span>
           <div class="grow"><b>${esc(p.displayName)}</b><span>${esc(c.lastMessage || "Say hi 👋")}</span></div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
             <span class="time">${esc(timeFmt(c.lastMessageAt))}</span>
@@ -796,7 +935,10 @@ function subscribeChats() {
         row.addEventListener("click", () => openChatPushed(d.id, other, p));
         box.appendChild(row);
         watchChat(d.id);
+        watchPresence(other);
       }
+      state.chatCount = docs.length;
+      renderStats();
       if (totalUnread > 0) {
         badge.textContent = totalUnread > 9 ? "9+" : totalUnread;
         badge.classList.remove("hidden");
@@ -805,6 +947,7 @@ function subscribeChats() {
         badge.classList.add("hidden");
         document.title = "Guff — chat with your people";
       }
+      setAppBadge(totalUnread);
     }, err => console.error(err));
   state.unsubs.push(u);
 }
@@ -836,12 +979,16 @@ function openChat(cid, otherUid, otherProfile) {
   state.chatId = cid;
   state.otherUid = otherUid;
   state.otherProfile = otherProfile;
+  state.typingThem = false;
   $("chat-avatar").src = avatarURL(otherProfile);
+  const wrap = $("chat-avatar-wrap");
+  if (wrap) wrap.dataset.presenceUid = otherUid;
   $("chat-name").textContent = otherProfile.displayName;
-  $("chat-status").textContent = "@" + (otherProfile.username || "");
+  updateChatStatus();
   $("messages").innerHTML = "";
   showScreen("screen-chat");
   markRead();
+  watchPresence(otherUid);
 
   const u = db.collection("chats").doc(cid).collection("messages")
     .orderBy("createdAt", "asc").limitToLast(100)
@@ -854,8 +1001,8 @@ function openChat(cid, otherUid, otherProfile) {
       if (!doc.exists || doc.id !== state.chatId) return;
       const c = doc.data();
       const t = c["typing_" + state.otherUid];
-      const recent = t && (Date.now() - t.toDate().getTime() < 6000);
-      $("chat-status").textContent = recent ? "typing…" : "@" + (state.otherProfile.username || "");
+      state.typingThem = !!(t && (Date.now() - t.toDate().getTime() < 6000));
+      updateChatStatus();
     }, () => {});
   state.unsubs.push(u, u2);
   state.chatUnsubs.push(u, u2);
@@ -865,19 +1012,24 @@ function renderMessages(docs) {
   const box = $("messages");
   box.innerHTML = "";
   let lastDay = "";
+  let prevSender = null;
   docs.forEach(d => {
     const m = d.data();
     const day = dayLabel(m.createdAt);
+    let dayBreak = false;
     if (day && day !== lastDay) {
       lastDay = day;
+      dayBreak = true;
       const div = document.createElement("div");
       div.className = "day-divider";
       div.innerHTML = `<span>${esc(day)}</span>`;
       box.appendChild(div);
     }
     const me = m.sender === state.user.uid;
+    const grouped = !dayBreak && prevSender === m.sender;
+    prevSender = m.sender;
     const wrap = document.createElement("div");
-    wrap.className = "msg " + (me ? "me" : "them");
+    wrap.className = "msg " + (me ? "me" : "them") + (grouped ? " grouped" : "");
     let body = "";
     if (m.type === "text") {
       body = esc(m.text);
@@ -891,7 +1043,9 @@ function renderMessages(docs) {
         <span class="file-chip">📎<span><span class="fname">${esc(m.fileName || "file")}</span><br><span class="fsize">${esc(fmtSize(m.fileSize))}</span></span></span></a>`;
       if (m.text) body += `<div>${esc(m.text)}</div>`;
     }
-    wrap.innerHTML = `<div class="bubble">${body}</div><div class="meta">${esc(timeFmt(m.createdAt))}</div>`;
+    let meta = esc(timeFmt(m.createdAt));
+    if (me) meta += m.read ? ' <span class="ticks read">✓✓</span>' : ' <span class="ticks">✓</span>';
+    wrap.innerHTML = `<div class="bubble">${body}</div><div class="meta">${meta}</div>`;
     box.appendChild(wrap);
   });
   box.scrollTop = box.scrollHeight;
@@ -942,6 +1096,7 @@ async function sendText() {
   onComposerInput();
   try {
     await pushMessage({ type: "text", text });
+    try { if (navigator.vibrate) navigator.vibrate(8); } catch (e) {}
   } catch (e) {
     console.error(e);
     toast("Couldn't send. Try again.");

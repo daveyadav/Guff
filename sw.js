@@ -1,5 +1,5 @@
 /* Guff service worker — offline app shell */
-const CACHE = "guff-shell-v5";
+const CACHE = "guff-shell-v6";
 const SHELL = [
   "./",
   "./index.html",
@@ -7,8 +7,8 @@ const SHELL = [
   "./js/config.js",
   "./js/app.js",
   "./manifest.webmanifest",
-  "./icons/icon-192.png",
-  "./icons/icon-512.png",
+  "./icons/logo-192.png",
+  "./icons/logo-512.png",
   "./icons/favicon-64.png",
 ];
 
