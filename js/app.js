@@ -68,6 +68,12 @@ function tsMillis(v) {
   if (!v) return 0;
   return v.toMillis ? v.toMillis() : v;
 }
+/* Profile cache: lets a refresh restore the main screen instantly and
+   keeps the user signed in visually even if the network is flaky. */
+const PROFILE_CACHE_KEY = "guff_profile_v1";
+function writeProfileCache(p) { try { localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(p)); } catch (e) {} }
+function readProfileCache() { try { const s = localStorage.getItem(PROFILE_CACHE_KEY); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
+function clearProfileCache() { try { localStorage.removeItem(PROFILE_CACHE_KEY); } catch (e) {} }
 function stopAll() {
   state.unsubs.forEach(u => { try { u(); } catch (e) {} });
   state.unsubs = [];
@@ -108,29 +114,47 @@ function wireStatic() {
   $("file-input").addEventListener("change", sendFiles);
   $("btn-mic").addEventListener("click", toggleRecording);
   $("btn-rec-cancel").addEventListener("click", cancelRecording);
+  $("btn-retry-load").addEventListener("click", () => location.reload());
 }
 
 /* ---------- auth ---------- */
 function onAuth(user) {
   state.user = user;
   if (!user) {
+    // Genuinely signed out: this is the ONLY path that shows the login screen.
     stopAll();
     state.profile = null;
+    clearProfileCache();
     showScreen("screen-auth");
     return;
+  }
+  // Signed in: enter immediately with the cached profile so a refresh never
+  // drops back to the login screen, then refresh the profile in the background.
+  const cached = readProfileCache();
+  if (cached && cached.uid === user.uid && cached.username) {
+    state.profile = cached;
+    enterMain();
   }
   db.collection("users").doc(user.uid).get().then(doc => {
     if (doc.exists && doc.data().username) {
       state.profile = Object.assign({ uid: user.uid }, doc.data());
+      writeProfileCache(state.profile);
       enterMain();
-    } else {
-      // needs onboarding
+    } else if (!state.profile || state.profile.uid !== user.uid) {
+      // needs onboarding (and we aren't already in main with a cached profile)
       $("ob-displayname").value = user.displayName || "";
       showScreen("screen-onboarding");
     }
   }).catch(err => {
     console.error(err);
-    toast("Couldn't load your profile. Check connection.");
+    if (state.profile && state.profile.uid === user.uid) {
+      toast("Couldn't refresh your profile — showing cached info.");
+    } else {
+      // Still signed in, just unreachable: stay on loading with a retry option.
+      // Never bounce a signed-in user to the login screen.
+      $("loading-msg").textContent = "Couldn't reach Guff. Check your connection.";
+      $("btn-retry-load").classList.remove("hidden");
+    }
   });
 }
 
@@ -255,6 +279,7 @@ async function finishOnboarding(e) {
     await batch.commit();
 
     state.profile = { uid: user.uid, username, usernameLower: username, displayName, email: user.email, photoURL };
+    writeProfileCache(state.profile);
     toast("Welcome to Guff, " + displayName + "!");
     enterMain();
   } catch (err) {

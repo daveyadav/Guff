@@ -18,8 +18,20 @@
 <body>
 <div id="app">
 
+  <!-- ============ LOADING ============ -->
+  <section id="screen-loading" class="screen active">
+    <div class="auth-wrap">
+      <div class="brand">
+        <div class="brand-mark">g</div>
+        <h1>Guff</h1>
+        <p id="loading-msg">loading…</p>
+      </div>
+      <button id="btn-retry-load" class="btn hidden">Try again</button>
+    </div>
+  </section>
+
   <!-- ============ AUTH ============ -->
-  <section id="screen-auth" class="screen active">
+  <section id="screen-auth" class="screen">
     <div class="auth-wrap">
       <div class="brand">
         <div class="brand-mark">g</div>
