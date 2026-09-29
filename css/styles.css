@@ -41,10 +41,17 @@ body {
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   overscroll-behavior-y: none;
+  overflow: hidden;
   transition: background 0.25s ease, color 0.25s ease;
 }
-#app { max-width: 520px; margin: 0 auto; height: 100dvh; position: relative; background: var(--bg); overflow: hidden; }
-.screen { display: none; height: 100dvh; flex-direction: column; }
+/* #app is fixed to the viewport so the bottom nav is always in frame,
+   even on phones where 100dvh behaves oddly (URL bar, webviews, old browsers) */
+#app {
+  position: fixed; top: 0; bottom: 0; left: 0; right: 0;
+  width: 100%; max-width: 520px; margin: 0 auto;
+  background: var(--bg); overflow: hidden;
+}
+.screen { display: none; height: 100%; flex-direction: column; }
 .screen.active { display: flex; }
 .hidden { display: none !important; }
 .muted { color: var(--muted); }
@@ -59,7 +66,7 @@ body {
 /* ---------- auth ---------- */
 #screen-auth, #screen-onboarding { justify-content: center; }
 #screen-loading .auth-wrap { align-items: center; }
-.auth-wrap { padding: 32px 28px; display: flex; flex-direction: column; gap: 14px; max-height: 100dvh; overflow-y: auto; }
+.auth-wrap { padding: 32px 28px; display: flex; flex-direction: column; gap: 14px; max-height: 100%; overflow-y: auto; }
 .brand { text-align: center; margin-bottom: 8px; }
 .brand h1 {
   margin: 0; font-size: 34px; letter-spacing: -0.5px; font-weight: 800;
