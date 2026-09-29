@@ -220,13 +220,17 @@ async function finishOnboarding(e) {
     const unDoc = await unRef.get();
     if (unDoc.exists) return fail("That username is taken. Try another.");
 
-    // optional avatar upload
+    // optional avatar upload (non-blocking: skipped if Storage isn't set up)
     let photoURL = user.photoURL || null;
     const f = $("ob-avatar").files[0];
     if (f) {
-      const ref = storage.ref("profiles/" + user.uid + "/avatar.jpg");
-      await ref.put(f);
-      photoURL = await ref.getDownloadURL();
+      try {
+        const ref = storage.ref("profiles/" + user.uid + "/avatar.jpg");
+        await ref.put(f);
+        photoURL = await ref.getDownloadURL();
+      } catch (upErr) {
+        console.warn("avatar upload skipped:", upErr && upErr.code);
+      }
     }
 
     // link password login to the Google account
