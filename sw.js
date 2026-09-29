@@ -1,5 +1,5 @@
 /* Guff service worker — offline app shell */
-const CACHE = "guff-shell-v6";
+const CACHE = "guff-shell-v7";
 const SHELL = [
   "./",
   "./index.html",

@@ -1012,22 +1012,21 @@ function renderMessages(docs) {
   const box = $("messages");
   box.innerHTML = "";
   let lastDay = "";
-  let prevSender = null;
-  docs.forEach(d => {
+  docs.forEach((d, i) => {
     const m = d.data();
     const day = dayLabel(m.createdAt);
-    let dayBreak = false;
     if (day && day !== lastDay) {
       lastDay = day;
-      dayBreak = true;
       const div = document.createElement("div");
       div.className = "day-divider";
       div.innerHTML = `<span>${esc(day)}</span>`;
       box.appendChild(div);
     }
     const me = m.sender === state.user.uid;
-    const grouped = !dayBreak && prevSender === m.sender;
-    prevSender = m.sender;
+    // group with the NEXT message: the time + read tick renders once, on the
+    // last bubble of each same-sender run (so the tick always reflects the newest message)
+    const nextM = docs[i + 1] ? docs[i + 1].data() : null;
+    const grouped = !!(nextM && nextM.sender === m.sender && dayLabel(nextM.createdAt) === day);
     const wrap = document.createElement("div");
     wrap.className = "msg " + (me ? "me" : "them") + (grouped ? " grouped" : "");
     let body = "";
