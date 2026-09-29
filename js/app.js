@@ -74,6 +74,18 @@ const PROFILE_CACHE_KEY = "guff_profile_v1";
 function writeProfileCache(p) { try { localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(p)); } catch (e) {} }
 function readProfileCache() { try { const s = localStorage.getItem(PROFILE_CACHE_KEY); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
 function clearProfileCache() { try { localStorage.removeItem(PROFILE_CACHE_KEY); } catch (e) {} }
+/* Safe single-doc read: returns the snapshot, or null when the doc is missing.
+   Our rules deny reads of missing docs in some collections (accessing
+   resource.data on a missing doc fails the rule), so a missing doc surfaces
+   as an error — treat it as "not there" instead of failing the whole flow. */
+async function getDocOrNull(ref) {
+  try {
+    const d = await ref.get();
+    return d.exists ? d : null;
+  } catch (e) {
+    return null;
+  }
+}
 function stopAll() {
   state.unsubs.forEach(u => { try { u(); } catch (e) {} });
   state.unsubs = [];
@@ -329,19 +341,19 @@ async function searchFriend() {
       box.innerHTML = `<p class="muted">That's you!</p>`;
       return;
     }
-    const uDoc = await db.collection("users").doc(uid).get();
-    const p = Object.assign({ uid }, uDoc.data());
-    const alreadyFriend = await db.collection("friendships").doc(chatIdFor(state.user.uid, uid)).get();
+    const uDoc = await getDocOrNull(db.collection("users").doc(uid));
+    const p = Object.assign({ uid: uid, displayName: q, username: q }, uDoc && uDoc.data());
+    const alreadyFriend = await getDocOrNull(db.collection("friendships").doc(chatIdFor(state.user.uid, uid)));
     const reqId = state.user.uid + "_" + uid;
     const revId = uid + "_" + state.user.uid;
-    const reqDoc = await db.collection("friendRequests").doc(reqId).get();
-    const revDoc = await db.collection("friendRequests").doc(revId).get();
+    const reqDoc = await getDocOrNull(db.collection("friendRequests").doc(reqId));
+    const revDoc = await getDocOrNull(db.collection("friendRequests").doc(revId));
     let action;
-    if (alreadyFriend.exists) {
+    if (alreadyFriend) {
       action = `<button class="btn-accept" data-openchat="${uid}">Message</button>`;
-    } else if (reqDoc.exists && reqDoc.data().status === "pending") {
+    } else if (reqDoc && reqDoc.data().status === "pending") {
       action = `<span class="muted">Request sent</span>`;
-    } else if (revDoc.exists && revDoc.data().status === "pending") {
+    } else if (revDoc && revDoc.data().status === "pending") {
       action = `<span class="muted">They sent you a request — check Requests tab</span>`;
     } else {
       action = `<button class="btn-accept" data-add="${uid}" data-un="${esc(p.username)}" data-nm="${esc(p.displayName)}" data-ph="${esc(p.photoURL || "")}">Add friend</button>`;
@@ -607,8 +619,8 @@ async function openChatWith(otherUid) {
   } catch (e) {}
   // make sure chat doc exists
   try {
-    const cd = await db.collection("chats").doc(cid).get();
-    if (!cd.exists) {
+    const cd = await getDocOrNull(db.collection("chats").doc(cid));
+    if (!cd) {
       await db.collection("chats").doc(cid).set({
         participants: [state.user.uid, otherUid], createdAt: serverTS(),
         lastMessageAt: 0, lastMessage: "",
