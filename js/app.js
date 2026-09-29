@@ -358,7 +358,8 @@ async function searchFriend() {
       openChatWith(b.dataset.openchat)));
   } catch (e) {
     console.error(e);
-    box.innerHTML = `<p class="muted">Search failed. Try again.</p>`;
+    const code = e && e.code ? " (" + e.code + ")" : "";
+    box.innerHTML = `<p class="muted">Search failed${esc(code)}. Try again.</p>`;
   }
 }
 
